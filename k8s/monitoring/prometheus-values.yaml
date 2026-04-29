@@ -1,0 +1,55 @@
+alertmanager:
+  enabled: true
+  persistence:
+    enabled: false
+
+server:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  retention: "6h"
+
+pushgateway:
+  enabled: false
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: selfhealing-alerts
+        rules:
+          - alert: PodRestarting
+            expr: increase(kube_pod_container_status_restarts_total[5m]) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.pod }} is restarting"
+              description: "Pod has restarted in the last 5 minutes"
+
+          - alert: PodNotReady
+            expr: kube_pod_status_ready{condition="false"} == 1
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod {{ $labels.pod }} is not ready"
+
+          - alert: HighMemoryUsage
+            expr: container_memory_usage_bytes{namespace="default"} > 50000000
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage in {{ $labels.pod }}"

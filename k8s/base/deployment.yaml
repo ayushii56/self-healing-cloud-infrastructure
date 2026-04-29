@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selfhealing-app
+  namespace: default
+  labels:
+    app: selfhealing-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: selfhealing-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: selfhealing-app
+    spec:
+      containers:
+      - name: app
+        image: public.ecr.aws/docker/library/node:20-alpine
+        command: ["node", "-e", "
+          const http = require('http');
+          let healthy = true;
+          let count = 0;
+          const server = http.createServer((req, res) => {
+            count++;
+            if (req.url === '/health/live') {
+              if (!healthy) { res.writeHead(500); res.end(JSON.stringify({status:'UNHEALTHY'})); return; }
+              res.writeHead(200); res.end(JSON.stringify({status:'ALIVE', uptime: process.uptime()}));
+            } else if (req.url === '/health/ready') {
+              res.writeHead(200); res.end(JSON.stringify({status:'READY'}));
+            } else if (req.url === '/break' && req.method === 'POST') {
+              healthy = false;
+              res.writeHead(200); res.end(JSON.stringify({message:'App broken! K8s will restart soon.'}));
+            } else {
+              res.writeHead(200); res.end(JSON.stringify({message:'Self-Healing App', count, pod: process.env.HOSTNAME}));
+            }
+          });
+          server.listen(3000, () => console.log('Running on 3000'));
+        "]
+        ports:
+          - containerPort: 3000
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+            limits:
+            memory: "64Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+          timeoutSeconds: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: selfhealing-app-svc
+  namespace: default
+spec:
+  selector:
+    app: selfhealing-app
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: LoadBalancer
